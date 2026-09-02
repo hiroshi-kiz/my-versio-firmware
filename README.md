@@ -59,12 +59,36 @@ https://portal.noiseengineering.us/
 
 ## 現在のファームウェアの内容
 
-`firmware/MyVersioFirmware.cpp` は最小構成のサイン波オシレーター example です。
+`firmware/MyVersioFirmware.cpp` は、KORG ELECTRIBE R (ER-1) のOSCILLATOR / AMP / DELAYを参考にした、単発トリガーのパーカッションボイスです。信号経路は `OSC(ピッチエンベロープ付き) → AMP(エンベロープ) → DELAY(BPM同期)` です。
 
-- KNOB_0: 周波数 (50Hz 〜 2050Hz)
-- KNOB_1: 音量
+### トリガー
 
-ここから自分の音源処理・エフェクトに書き換えていく想定の雛形です。
+ゲート入力（またはパネルの momentary ボタン）の立ち上がりで発音します。
+
+### ノブ
+
+| ノブ | パラメータ |
+|---|---|
+| KNOB_0 | OSC 基本ピッチ (30Hz〜300Hz) |
+| KNOB_1 | OSC ピッチエンベロープ量 (0〜4オクターブ) |
+| KNOB_2 | OSC ピッチディケイタイム |
+| KNOB_3 | AMP ディケイタイム |
+| KNOB_4 | DELAY フィードバック量 |
+| KNOB_5 | DELAY ミックス (Dry/Wet) |
+| KNOB_6 | DELAY タイム切替時のグライドタイム |
+
+### トグルスイッチ
+
+- **SW_0**（3ポジション）: DELAYタイムの分周比（4分 / 8分 / 16分音符）。BPMは`MyVersioFirmware.cpp`冒頭の`TEMPO_BPM`定数で固定（現在136）。外部クロックには依存しないので、変更したい場合はこの定数を書き換えて再ビルド・再書き込みする。
+- **SW_1**（3ポジション）: OSC波形（Sine / Square / Noise）
+
+分周比を切り替えた瞬間、ディレイタイムは即座に切り替わらず指定のグライドタイムでなめらかに遷移する。これによりフィードバックしている音のピッチが一瞬揺れる、テープ/BBDディレイのような効果が得られる。
+
+### LED
+
+- LED_0: AMPエンベロープの発音インジケーター
+- LED_1: 現在のOSC波形（Sine=赤 / Square=緑 / Noise=青）
+- LED_2: 現在のDELAY分周比（4分=赤 / 8分=緑 / 16分=青）
 
 ## 参考リンク
 
