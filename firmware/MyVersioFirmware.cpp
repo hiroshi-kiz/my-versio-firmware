@@ -1,6 +1,7 @@
 #include "daisy_versio.h"
 #include "daisysp.h"
 #include <math.h>
+#include <stdint.h>
 
 using namespace daisy;
 using namespace daisysp;
@@ -9,9 +10,17 @@ using namespace daisysp;
 // ハードウェア呼称（Ruina Versioパネル準拠、実機確認済み）
 //   ノブ:  A=Blend  B=Center  C=Phase  D=Fold  E=DOOM  F=Drive  G=8vize
 //   トグル: T1=UND/X/OVR(SW_0)  T2=OFF/ON/TRK(SW_1)
-//   ボタン: X=Smoosh(hw.tap / SwitchPressed)
-//   ジャック: TR=ゲート/トリガー入力(hw.gate)  INL/INR=Audio In  OUTL/OUTR=Audio Out
+//   Smoosh: 1つの物理パーツがボタンとジャックを兼ねる。
+//           X-SW=ボタン部分(hw.tap / SwitchPressed)  X-IN=ジャック部分(hw.gate)
+//   ジャック: INL/INR=Audio In  OUTL/OUTR=Audio Out
 //   LED: L1=LED_0  L2=LED_1  L3=LED_2  L4=LED_3
+//
+// 役割分担:
+//   X-IN  : ドラムのトリガー専用
+//   X-SW  : タップテンポ入力
+//   INL   : 外部クロック入力(オーディオ入力をゲートのように閾値検出して使う)
+//   X-SWとINLはどちらも同じ tempo_period_sec を上書きする。
+//   最後に信号があった方が優先される(明示的な排他制御はしない、最も単純な方式)。
 // =====================================================================
 constexpr int KNOB_A = DaisyVersio::KNOB_0; // Blend      -> OSC基本ピッチ
 constexpr int KNOB_B = DaisyVersio::KNOB_6; // Center     -> DELAYグライドタイム
@@ -30,11 +39,17 @@ constexpr size_t LED_L3 = 2;
 constexpr size_t LED_L4 = 3;
 
 // =====================================================================
-// テンポ設定
-// 外部クロックには依存せず、ここで固定する。変更したい場合はこの値を
-// 書き換えてビルド・書き込みし直す（DELAYタイムはこのBPMの分周比で決まる）。
+// 起動時の初期テンポ。X-SW(タップテンポ)やINL(外部クロック)で
+// 上書きされるまではこの値が使われる。
 // =====================================================================
 #define TEMPO_BPM 136.0f
+
+// タップ/クロックとして受理する周期の範囲(この外側はノイズや誤操作とみなして無視)
+constexpr float kMinTempoPeriodSec = 0.05f; // 1200 BPM相当
+constexpr float kMaxTempoPeriodSec = 3.0f;  // 20 BPM相当
+
+// INLのクロック検出しきい値(0〜1、Eurorackのゲート/トリガーを想定)
+constexpr float kClockThreshold = 0.3f;
 
 // ディレイバッファの最大長（サンプル数）。48kHz換算で1秒分確保しておけば
 // BPM60の4分音符までカバーできる。SDRAM(64MB)に置くことで内蔵SRAMを圧迫しない。
@@ -57,10 +72,12 @@ enum Waveform
 };
 
 float sample_rate;
-float quarter_note_sec;
+
+// X-SW(タップテンポ)とINL(外部クロック)の両方から書き換えられる、
+// 現在のテンポ(4分音符の周期、秒)。最後に更新した方が使われる。
+volatile float tempo_period_sec = 60.f / TEMPO_BPM;
 
 // 制御レート(メインループ)で更新され、オーディオコールバックから参照される値
-volatile bool  trigger_pending   = false;
 volatile int   waveform_mode     = WAVE_MODE_SINE;
 volatile float base_freq         = 60.f;
 volatile float pitch_depth_oct   = 2.f;
@@ -73,6 +90,10 @@ volatile float delay_led_brightness       = 0.f;
 float delay_time_current_samples = 0.f;
 float delay_led_phase            = 0.f; // 0〜1でディレイ1周期を表す（LED明滅用）
 
+// INL外部クロック検出用(オーディオコールバック内でのみ使用)
+float    inl_prev_sample        = 0.f;
+uint32_t inl_samples_since_edge = 0;
+
 float ExpMap(float knob01, float min_v, float max_v)
 {
     return min_v * powf(max_v / min_v, knob01);
@@ -83,11 +104,12 @@ float ExpMap(float knob01, float min_v, float max_v)
 // これによりBBD/テープディレイ風に、切替の瞬間フィードバック音のピッチが動く。
 float SubdivisionSeconds(int sw_pos)
 {
+    float period = tempo_period_sec;
     switch(sw_pos)
     {
-        case Switch3::POS_UP: return quarter_note_sec; // 4分音符
-        case Switch3::POS_DOWN: return quarter_note_sec * 0.25f; // 16分音符
-        default: return quarter_note_sec * 0.5f; // 8分音符 (POS_CENTER)
+        case Switch3::POS_UP: return period; // 4分音符
+        case Switch3::POS_DOWN: return period * 0.25f; // 16分音符
+        default: return period * 0.5f; // 8分音符 (POS_CENTER)
     }
 }
 
@@ -97,6 +119,19 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
 {
     for(size_t i = 0; i < size; i += 2)
     {
+        // INL: オーディオ入力(L)を外部クロックとして扱い、しきい値超えの
+        // 立ち上がりエッジ間隔をテンポとして採用する。
+        inl_samples_since_edge++;
+        float inl_sample = in[i];
+        if(inl_sample > kClockThreshold && inl_prev_sample <= kClockThreshold)
+        {
+            float interval_sec = inl_samples_since_edge / sample_rate;
+            if(interval_sec > kMinTempoPeriodSec && interval_sec < kMaxTempoPeriodSec)
+                tempo_period_sec = interval_sec;
+            inl_samples_since_edge = 0;
+        }
+        inl_prev_sample = inl_sample;
+
         delay_time_current_samples
             += (delay_time_target_samples - delay_time_current_samples)
                * delay_glide_coeff;
@@ -138,8 +173,7 @@ int main(void)
 {
     hw.Init();
     hw.SetAudioBlockSize(4);
-    sample_rate      = hw.AudioSampleRate();
-    quarter_note_sec = 60.f / TEMPO_BPM;
+    sample_rate = hw.AudioSampleRate();
 
     osc.Init(sample_rate);
     osc.SetWaveform(Oscillator::WAVE_SIN);
@@ -165,9 +199,9 @@ int main(void)
     hw.StartAdc();
     hw.StartAudio(AudioCallback);
 
-    int  last_sw0          = -1;
-    int  last_sw1          = -1;
-    bool last_switch_state = false; // Smooshボタンの立ち上がりエッジ検出用
+    int      last_sw1          = -1;
+    bool     last_switch_state = false; // X-SWの立ち上がりエッジ検出用
+    uint32_t last_tap_time_ms  = 0;
 
     while(1)
     {
@@ -189,11 +223,9 @@ int main(void)
         delay_glide_coeff    = 1.f - expf(-1.f / (glide_time_sec * sample_rate));
 
         int sw0 = hw.sw[SW_T1].Read(); // T1: DELAY分周比
-        if(sw0 != last_sw0)
-        {
-            delay_time_target_samples = SubdivisionSeconds(sw0) * sample_rate;
-            last_sw0                  = sw0;
-        }
+        // tempo_period_secがX-SW/INLから継続的に更新されるため、
+        // T1が変化していなくても毎ループ計算し直す(コストは軽微)。
+        delay_time_target_samples = SubdivisionSeconds(sw0) * sample_rate;
 
         int sw1 = hw.sw[SW_T2].Read(); // T2: OSC波形
         if(sw1 != last_sw1)
@@ -207,13 +239,23 @@ int main(void)
             last_sw1 = sw1;
         }
 
-        // X(Smoosh)はSwitchPressed()で押している間ずっとtrueを返すレベル検出のため、
-        // 立ち上がりエッジ(押した瞬間)だけを自前で検出する。
+        // X-SW(Smooshボタン)はSwitchPressed()で押している間ずっとtrueを返す
+        // レベル検出のため、立ち上がりエッジ(押した瞬間)だけを自前で検出する。
         bool switch_state  = hw.SwitchPressed();
         bool switch_rising = switch_state && !last_switch_state;
         last_switch_state  = switch_state;
 
-        if(hw.gate.Trig() || switch_rising) // TR(ゲート入力) or X(Smoosh)
+        if(switch_rising) // X-SW: タップテンポ
+        {
+            uint32_t now_ms   = System::GetNow();
+            uint32_t interval = now_ms - last_tap_time_ms;
+            float    interval_sec = interval / 1000.f;
+            if(interval_sec > kMinTempoPeriodSec && interval_sec < kMaxTempoPeriodSec)
+                tempo_period_sec = interval_sec;
+            last_tap_time_ms = now_ms;
+        }
+
+        if(hw.gate.Trig()) // X-IN: ドラムのトリガー
         {
             pitch_env.Trigger();
             amp_env.Trigger();
