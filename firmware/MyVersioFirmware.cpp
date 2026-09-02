@@ -148,6 +148,9 @@ int main(void)
     while(1)
     {
         hw.ProcessAnalogControls();
+        // hw.UpdateExample()を使わない場合、tap(Smooshボタン)のデバウンス処理は
+        // 誰も呼ばないため、明示的に呼び出す必要がある。
+        hw.tap.Debounce();
 
         base_freq       = ExpMap(hw.GetKnobValue(DaisyVersio::KNOB_0), 30.f, 300.f);
         pitch_depth_oct = hw.GetKnobValue(DaisyVersio::KNOB_1) * 4.f;
