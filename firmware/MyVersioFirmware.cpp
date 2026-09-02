@@ -6,15 +6,28 @@ using namespace daisy;
 using namespace daisysp;
 
 // =====================================================================
-// ハードウェア呼称（Ruina Versioパネル準拠）
+// ハードウェア呼称（Ruina Versioパネル準拠、実機確認済み）
 //   ノブ:  A=Blend  B=Center  C=Phase  D=Fold  E=DOOM  F=Drive  G=8vize
-//          ※どのKNOB_n(ADCチャンネル)がA〜Gのどれに対応するかは実機確認待ち。
-//            確認済みのKNOB_0〜6の役割は各行のコメントを参照。
 //   トグル: T1=UND/X/OVR(SW_0)  T2=OFF/ON/TRK(SW_1)
 //   ボタン: X=Smoosh(hw.tap / SwitchPressed)
 //   ジャック: TR=ゲート/トリガー入力(hw.gate)  INL/INR=Audio In  OUTL/OUTR=Audio Out
 //   LED: L1=LED_0  L2=LED_1  L3=LED_2  L4=LED_3
 // =====================================================================
+constexpr int KNOB_A = DaisyVersio::KNOB_0; // Blend      -> OSC基本ピッチ
+constexpr int KNOB_B = DaisyVersio::KNOB_6; // Center     -> DELAYグライドタイム
+constexpr int KNOB_C = DaisyVersio::KNOB_4; // Phase      -> DELAYフィードバック
+constexpr int KNOB_D = DaisyVersio::KNOB_2; // Fold       -> OSCピッチディケイ
+constexpr int KNOB_E = DaisyVersio::KNOB_3; // DOOM       -> AMPディケイ
+constexpr int KNOB_F = DaisyVersio::KNOB_5; // Drive      -> DELAYミックス
+constexpr int KNOB_G = DaisyVersio::KNOB_1; // 8vize      -> OSCピッチEG量
+
+constexpr int SW_T1 = DaisyVersio::SW_0; // UND/X/OVR -> DELAY分周比
+constexpr int SW_T2 = DaisyVersio::SW_1; // OFF/ON/TRK -> OSC波形
+
+constexpr size_t LED_L1 = 0;
+constexpr size_t LED_L2 = 1;
+constexpr size_t LED_L3 = 2;
+constexpr size_t LED_L4 = 3;
 
 // =====================================================================
 // テンポ設定
@@ -163,27 +176,26 @@ int main(void)
         // 誰も呼ばないため、明示的に呼び出す必要がある。
         hw.tap.Debounce();
 
-        // KNOB_0〜6 → Ruina Versioパネルの A〜G のどれかは実機確認待ち(TODO)
-        base_freq       = ExpMap(hw.GetKnobValue(DaisyVersio::KNOB_0), 30.f, 300.f);        // OSC基本ピッチ
-        pitch_depth_oct = hw.GetKnobValue(DaisyVersio::KNOB_1) * 4.f;                        // OSCピッチEG量
+        base_freq       = ExpMap(hw.GetKnobValue(KNOB_A), 30.f, 300.f);   // A: OSC基本ピッチ
+        pitch_depth_oct = hw.GetKnobValue(KNOB_G) * 4.f;                  // G: OSCピッチEG量
         pitch_env.SetTime(ADENV_SEG_DECAY,
-                           ExpMap(hw.GetKnobValue(DaisyVersio::KNOB_2), 0.001f, 0.3f));      // OSCピッチディケイ
+                           ExpMap(hw.GetKnobValue(KNOB_D), 0.001f, 0.3f)); // D: OSCピッチディケイ
         amp_env.SetTime(ADENV_SEG_DECAY,
-                         ExpMap(hw.GetKnobValue(DaisyVersio::KNOB_3), 0.005f, 1.f));         // AMPディケイ
-        feedback_amount = hw.GetKnobValue(DaisyVersio::KNOB_4) * 0.92f;                      // DELAYフィードバック
-        delay_mix       = hw.GetKnobValue(DaisyVersio::KNOB_5);                              // DELAYミックス
+                         ExpMap(hw.GetKnobValue(KNOB_E), 0.005f, 1.f));    // E: AMPディケイ
+        feedback_amount = hw.GetKnobValue(KNOB_C) * 0.92f;                 // C: DELAYフィードバック
+        delay_mix       = hw.GetKnobValue(KNOB_F);                        // F: DELAYミックス
 
-        float glide_time_sec = ExpMap(hw.GetKnobValue(DaisyVersio::KNOB_6), 0.005f, 0.5f);   // DELAYグライドタイム
+        float glide_time_sec = ExpMap(hw.GetKnobValue(KNOB_B), 0.005f, 0.5f); // B: DELAYグライドタイム
         delay_glide_coeff    = 1.f - expf(-1.f / (glide_time_sec * sample_rate));
 
-        int sw0 = hw.sw[DaisyVersio::SW_0].Read(); // T1: DELAY分周比
+        int sw0 = hw.sw[SW_T1].Read(); // T1: DELAY分周比
         if(sw0 != last_sw0)
         {
             delay_time_target_samples = SubdivisionSeconds(sw0) * sample_rate;
             last_sw0                  = sw0;
         }
 
-        int sw1 = hw.sw[DaisyVersio::SW_1].Read(); // T2: OSC波形
+        int sw1 = hw.sw[SW_T2].Read(); // T2: OSC波形
         if(sw1 != last_sw1)
         {
             waveform_mode = (sw1 == Switch3::POS_UP)     ? WAVE_MODE_SINE
@@ -208,16 +220,16 @@ int main(void)
         }
 
         float hit = amp_env.GetValue();
-        hw.SetLed(0, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
-        hw.SetLed(1, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,                          // L2: OSC波形(T2)
+        hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
+        hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
                   waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
                   waveform_mode == WAVE_MODE_NOISE ? 1.f : 0.f);
-        hw.SetLed(2, sw0 == Switch3::POS_UP ? 1.f : 0.f,                                   // L3: DELAY分周比(T1)
+        hw.SetLed(LED_L3, sw0 == Switch3::POS_UP ? 1.f : 0.f,            // L3: DELAY分周比(T1)
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
                   sw0 == Switch3::POS_DOWN ? 1.f : 0.f);
         // L4: 色=フィードバック量(緑→赤)、明滅速度=ディレイタイム(分周比のテンポ)
         float fb_norm = feedback_amount / 0.92f;
-        hw.SetLed(3,
+        hw.SetLed(LED_L4,
                   fb_norm * delay_led_brightness,
                   (1.f - fb_norm) * delay_led_brightness,
                   0.f);

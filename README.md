@@ -61,36 +61,30 @@ https://portal.noiseengineering.us/
 
 `firmware/MyVersioFirmware.cpp` は、KORG ELECTRIBE R (ER-1) のOSCILLATOR / AMP / DELAYを参考にした、単発トリガーのパーカッションボイスです。信号経路は `OSC(ピッチエンベロープ付き) → AMP(エンベロープ) → DELAY(BPM同期)` です。
 
-### ハードウェア呼称（Ruina Versioパネル準拠）
+### ハードウェア呼称（Ruina Versioパネル準拠、実機確認済み）
 
 このプロジェクトでは、Ruina Versioのパネル印字に合わせて以下の呼称を使う。
 
-| 呼称 | パネル表記 / 内容 | ファームウェア上の実体 |
-|---|---|---|
-| A〜G | Blend, Center, Phase, Fold, DOOM, Drive, 8vize（7ノブ） | `KNOB_0`〜`KNOB_6`（**どれがどれに対応するかは実機確認待ち。下表はKNOB_n基準**） |
-| T1 | UND/X/OVR（3ポジショントグル） | `SW_0` |
-| T2 | OFF/ON/TRK（3ポジショントグル） | `SW_1` |
-| X | Smoosh（momentaryボタン） | `hw.tap` / `SwitchPressed()` |
-| TR | ゲート/トリガー入力ジャック | `hw.gate` |
-| INL / INR | Audio In L/R | (未使用) |
-| OUTL / OUTR | Audio Out L/R | ステレオ出力（現状L/R同一信号） |
-| L1〜L4 | 4つのRGB LED | `LED_0`〜`LED_3` |
+| 呼称 | パネル表記 | パラメータ | ファームウェア上の実体 |
+|---|---|---|---|
+| A | Blend | OSC 基本ピッチ (30Hz〜300Hz) | `KNOB_0` |
+| B | Center | DELAY タイム切替時のグライドタイム | `KNOB_6` |
+| C | Phase | DELAY フィードバック量 | `KNOB_4` |
+| D | Fold | OSC ピッチディケイタイム | `KNOB_2` |
+| E | DOOM | AMP ディケイタイム | `KNOB_3` |
+| F | Drive | DELAY ミックス (Dry/Wet) | `KNOB_5` |
+| G | 8vize | OSC ピッチエンベロープ量 (0〜4オクターブ) | `KNOB_1` |
+| T1 | UND/X/OVR（3ポジショントグル） | DELAY分周比切替 | `SW_0` |
+| T2 | OFF/ON/TRK（3ポジショントグル） | OSC波形切替 | `SW_1` |
+| X | Smoosh（momentaryボタン） | トリガー | `hw.tap` / `SwitchPressed()` |
+| TR | ゲート/トリガー入力ジャック | トリガー | `hw.gate` |
+| INL / INR | Audio In L/R | (未使用) | - |
+| OUTL / OUTR | Audio Out L/R | ステレオ出力（現状L/R同一信号） | - |
+| L1〜L4 | 4つのRGB LED | 下記LED節を参照 | `LED_0`〜`LED_3` |
 
 ### トリガー
 
 **TR**（ゲート入力）または**X**（Smooshボタン）の立ち上がりで発音します。
-
-### ノブ（KNOB_0〜6、A〜Gとの対応は要実機確認）
-
-| KNOB | パラメータ |
-|---|---|
-| KNOB_0 | OSC 基本ピッチ (30Hz〜300Hz) |
-| KNOB_1 | OSC ピッチエンベロープ量 (0〜4オクターブ) |
-| KNOB_2 | OSC ピッチディケイタイム |
-| KNOB_3 | AMP ディケイタイム |
-| KNOB_4 | DELAY フィードバック量 |
-| KNOB_5 | DELAY ミックス (Dry/Wet) |
-| KNOB_6 | DELAY タイム切替時のグライドタイム |
 
 ### トグルスイッチ
 
