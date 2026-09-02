@@ -224,33 +224,37 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
 }
 
 // [調査用] daisy_versio.cppが使っていない、Daisy SeedのADC対応ピンの残り9本。
-// KNOB_1(G)のスロットだけをこれらに順番に差し替えて、物理Gノブが本当は
-// どのピンに配線されているのかを実機でスキャンする。
-constexpr int kNumScanCandidates                        = 9;
-Pin           kScanCandidates[kNumScanCandidates]       = {
-    Pin(PORTA, 7),
-    Pin(PORTC, 5),
-    Pin(PORTB, 0),
-    Pin(PORTC, 0),
-    Pin(PORTC, 1),
-    Pin(PORTC, 2),
-    Pin(PORTC, 3),
-    Pin(PORTA, 0),
-    Pin(PORTA, 1),
-};
+// 物理Gノブが本当はどのピンに配線されているのかを実機でスキャンする。
+//
+// 以前の実装はADC稼働中に hw.seed.adc.Init() を4秒おきに呼び直しており、
+// これがハングの原因だった可能性が高い(L2が白いまま固まって見えた)。
+// 今回はDaisy Seedの最大16ch ADCを使い切り、既存7ノブ+候補9本を
+// 起動時に一度だけ同時初期化する。以後はADC設定に一切触れず、
+// どの候補の値をLEDに表示するかだけを切り替える。
+constexpr int kNumScanCandidates = 9;
+constexpr int kTotalAdcChannels  = DaisyVersio::KNOB_LAST + kNumScanCandidates; // 7+9=16
 
-void ReinitKnobAdcForScan(int candidate_idx)
+void InitAdcWithScanCandidates()
 {
     using namespace daisy::seed;
-    Pin pins[DaisyVersio::KNOB_LAST]
-        = {D21, D22, D28, D23, D16, D17, D19};
-    pins[1] = kScanCandidates[candidate_idx]; // KNOB_1(G)のスロットだけ差し替える
+    Pin pins[kTotalAdcChannels] = {
+        D21, D22, D28, D23, D16, D17, D19, // 既存7ノブ (index 0-6)
+        Pin(PORTA, 7),
+        Pin(PORTC, 5),
+        Pin(PORTB, 0),
+        Pin(PORTC, 0),
+        Pin(PORTC, 1),
+        Pin(PORTC, 2),
+        Pin(PORTC, 3),
+        Pin(PORTA, 0),
+        Pin(PORTA, 1), // 候補9本 (index 7-15)
+    };
 
-    AdcChannelConfig adc_cfg[DaisyVersio::KNOB_LAST];
-    for(int i = 0; i < DaisyVersio::KNOB_LAST; i++)
+    AdcChannelConfig adc_cfg[kTotalAdcChannels];
+    for(int i = 0; i < kTotalAdcChannels; i++)
         adc_cfg[i].InitSingle(pins[i], AdcChannelConfig::SPEED_64CYCLES_5);
 
-    hw.seed.adc.Init(adc_cfg, DaisyVersio::KNOB_LAST);
+    hw.seed.adc.Init(adc_cfg, kTotalAdcChannels);
     for(int i = 0; i < DaisyVersio::KNOB_LAST; i++)
         hw.knobs[i].Init(hw.seed.adc.GetPtr(i), hw.AudioCallbackRate(), true);
 }
@@ -259,7 +263,7 @@ int main(void)
 {
     hw.Init();
     hw.SetAudioBlockSize(4);
-    ReinitKnobAdcForScan(0);
+    InitAdcWithScanCandidates();
     sample_rate = hw.AudioSampleRate();
 
     osc.Init(sample_rate);
@@ -372,15 +376,15 @@ int main(void)
             clap_elapsed_samples = 0;
         }
 
-        // [調査用] ピンスキャン: KNOB_1(G)のスロットに、未使用ADCピンを
-        // 4秒ごとに順番に割り当てていく。最初の2秒はL1が(候補番号+1)回
-        // 白く点滅して現在の候補番号を示し、残り2秒はL2にその候補の生値を表示する。
+        // [調査用] ピンスキャン表示: ADC設定には一切触れず、どの候補チャンネル
+        // (index 7-15)の値をLEDに表示するかだけを4秒ごとに切り替える。
+        // 最初の2秒はL1が(候補番号+1)回白く点滅して現在の候補番号を示し、
+        // 残り2秒はL2にその候補の生値を表示する。
         uint32_t scan_now     = System::GetNow();
         uint32_t scan_elapsed = scan_now - scan_start_ms;
         if(scan_elapsed >= kScanCandidateHoldMs)
         {
-            scan_index = (scan_index + 1) % kNumScanCandidates;
-            ReinitKnobAdcForScan(scan_index);
+            scan_index    = (scan_index + 1) % kNumScanCandidates;
             scan_start_ms = scan_now;
             scan_elapsed  = 0;
         }
@@ -395,9 +399,10 @@ int main(void)
         }
         else
         {
-            float g_raw = hw.GetKnobValue(KNOB_G); // KNOB_G=KNOB_1のスロットは今スキャン中の候補ピン
+            float candidate_raw
+                = hw.seed.adc.GetFloat(DaisyVersio::KNOB_LAST + scan_index);
             hw.SetLed(LED_L1, 0.f, 0.f, 0.f);
-            hw.SetLed(LED_L2, g_raw, g_raw, g_raw);
+            hw.SetLed(LED_L2, candidate_raw, candidate_raw, candidate_raw);
         }
         hw.SetLed(LED_L3, sw0 == Switch3::POS_UP ? 1.f : 0.f,            // L3: DELAY分周比(T1)
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
