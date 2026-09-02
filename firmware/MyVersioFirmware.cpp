@@ -134,10 +134,13 @@ volatile float delay_led_brightness       = 0.f;
 float delay_time_current_samples = 0.f;
 float delay_led_phase            = 0.f; // 0〜1でディレイ1周期を表す（LED明滅用）
 
-// ピッチモジュレーション用(オーディオコールバック内でのみ使用)
-WhiteNoise mod_noise;      // Sample&Hold/Noiseタイプ用の乱数源
-float      mod_lfo_phase = 0.f; // フリーランのLFO位相(0〜1)
-float      mod_sh_value  = 0.f; // Sample&Holdで保持中の値
+// ピッチモジュレーション用
+WhiteNoise      mod_noise;             // Sample&Hold/Noiseタイプ用の乱数源
+volatile float  mod_lfo_phase = 0.f;   // LFO位相(0〜1)。トリガーごとに0へリセットする
+float           mod_sh_value  = 0.f;   // Sample&Holdで保持中の値(オーディオコールバック内でのみ使用)
+
+// Clapのゲイン補正。HP->LPを直列に通すと音量が下がるため、聴感を揃えるために増幅する。
+constexpr float kClapGain = 3.0f;
 
 // INL外部クロック検出用(オーディオコールバック内でのみ使用)
 float    inl_prev_sample        = 0.f;
@@ -176,8 +179,8 @@ float SubdivisionSeconds(int sw_pos)
     switch(sw_pos)
     {
         case Switch3::POS_UP: return period; // 4分音符
-        case Switch3::POS_DOWN: return period * 0.25f; // 16分音符
-        default: return period * 0.5f; // 8分音符 (POS_CENTER)
+        case Switch3::POS_DOWN: return period * 0.5f; // 8分音符
+        default: return period * 0.75f; // 付点8分音符 (POS_CENTER)
     }
 }
 
@@ -222,7 +225,7 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
             clap_lp.Process(clap_hp.High());
             float gate_target = ClapBurstGate(clap_elapsed_samples);
             clap_gate_smoothed += (gate_target - clap_gate_smoothed) * clap_gate_smooth_coeff;
-            osc_out = clap_lp.Low() * clap_gate_smoothed;
+            osc_out = clap_lp.Low() * clap_gate_smoothed * kClapGain;
         }
         else
         {
@@ -340,6 +343,9 @@ int main(void)
     amp_env.SetMax(1.f);
     amp_env.SetTime(ADENV_SEG_ATTACK, 0.001f);
     amp_env.SetTime(ADENV_SEG_DECAY, 0.2f);
+    // 直線的な減衰だと余韻が感じられないため、指数的な減衰カーブにする
+    // (立ち上がりは0.001秒と短いため、この設定による影響は無視できる)。
+    amp_env.SetCurve(-40.f);
 
     delay_line_l.Init();
     delay_line_r.Init();
@@ -409,6 +415,9 @@ int main(void)
             pitch_env.Trigger();
             amp_env.Trigger();
             clap_elapsed_samples = 0;
+            // Saw Down/Square/Triangle/S&Hはフリーランだと叩くたびに位相がずれて
+            // ランダムに聞こえてしまうため、トリガーごとに0へ揃えてリズムを安定させる。
+            mod_lfo_phase = 0.f;
         }
 
         float hit = amp_env.GetValue();
