@@ -75,9 +75,15 @@ enum Waveform
 
 // ハンドクラップ用: 短いノイズバーストを3回連打した後、通常のAMPディケイ(E)で
 // テールを鳴らす。オフセット/長さは固定値(808/909系クラップの模倣)。
-constexpr float kClapBurstOnSec       = 0.003f;
-constexpr float kClapBurstOffsetsSec[3] = {0.f, 0.010f, 0.020f};
-constexpr float kClapBurstEndSec      = 0.030f; // これ以降はテール(ゲート常時オープン)
+constexpr float kClapBurstOnSec       = 0.004f;
+constexpr float kClapBurstOffsetsSec[3] = {0.f, 0.012f, 0.024f};
+constexpr float kClapBurstEndSec      = 0.036f; // これ以降はテール(ゲート常時オープン)
+constexpr float kClapGateSmoothSec    = 0.002f; // バーストの角を丸めてクリック感を減らす
+
+// ピンポンディレイの左右クロスフィード量。1.0で完全に左右交互(硬いピンポン)、
+// 0.5で完全にモノラルへ収束。1.0未満にすると繰り返すたびに徐々にセンターへ
+// 収束していく(＝エコーが減衰しながら左右の広がりが狭まる)。
+constexpr float kDelayCrossFeed = 0.75f;
 
 float sample_rate;
 
@@ -101,6 +107,9 @@ float delay_led_phase            = 0.f; // 0〜1でディレイ1周期を表す�
 // INL外部クロック検出用(オーディオコールバック内でのみ使用)
 float    inl_prev_sample        = 0.f;
 uint32_t inl_samples_since_edge = 0;
+
+float clap_gate_smoothed  = 0.f; // バーストゲートの角を丸めた後の値
+float clap_gate_smooth_coeff = 0.f; // main()でsample_rate確定後に計算
 
 // ハンドクラップのバースト位置計算用。メインループでのトリガー時に0へ
 // リセットし、オーディオコールバックで毎サンプル加算する。
@@ -175,7 +184,9 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
         if(waveform_mode == WAVE_MODE_CLAP)
         {
             clap_filter.Process(noise.Process());
-            osc_out = clap_filter.Band() * ClapBurstGate(clap_elapsed_samples);
+            float gate_target = ClapBurstGate(clap_elapsed_samples);
+            clap_gate_smoothed += (gate_target - clap_gate_smoothed) * clap_gate_smooth_coeff;
+            osc_out = clap_filter.Band() * clap_gate_smoothed;
         }
         else
         {
@@ -187,11 +198,15 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
 
         float dry = osc_out * amp_val;
 
-        // ピンポンディレイ: Lの繰り返しをRへ、Rの繰り返しをLへ交互にフィードバックする
+        // ピンポンディレイ: kDelayCrossFeed分だけ左右をクロスフィードする。
+        // 1.0未満にすると、繰り返すたびに左右差が少しずつ縮み、
+        // エコーが減衰しながら中央へ収束していく。
         float wet_l = delay_line_l.Read();
         float wet_r = delay_line_r.Read();
-        delay_line_l.Write(dry + wet_r * feedback_amount);
-        delay_line_r.Write(wet_l * feedback_amount);
+        float feed_l = wet_l * (1.f - kDelayCrossFeed) + wet_r * kDelayCrossFeed;
+        float feed_r = wet_r * (1.f - kDelayCrossFeed) + wet_l * kDelayCrossFeed;
+        delay_line_l.Write(dry + feed_l * feedback_amount);
+        delay_line_r.Write(feed_r * feedback_amount);
 
         out[i]     = dry + wet_l * delay_mix;
         out[i + 1] = dry + wet_r * delay_mix;
@@ -210,9 +225,11 @@ int main(void)
     noise.Init();
 
     clap_filter.Init(sample_rate);
-    clap_filter.SetFreq(1200.f);
-    clap_filter.SetRes(0.4f);
-    clap_filter.SetDrive(0.2f);
+    clap_filter.SetFreq(1000.f);
+    clap_filter.SetRes(0.15f);
+    clap_filter.SetDrive(0.f);
+
+    clap_gate_smooth_coeff = 1.f - expf(-1.f / (kClapGateSmoothSec * sample_rate));
 
     pitch_env.Init(sample_rate);
     pitch_env.SetMin(0.f);
