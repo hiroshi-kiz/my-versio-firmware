@@ -59,7 +59,9 @@ https://portal.noiseengineering.us/
 
 ## 現在のファームウェアの内容
 
-`firmware/MyVersioFirmware.cpp` は、KORG ELECTRIBE R (ER-1) のOSCILLATOR / AMP / DELAYを参考にした、単発トリガーのパーカッションボイスです。信号経路は `OSC(ピッチエンベロープ付き) → AMP(エンベロープ) → DELAY(BPM同期)` です。
+`firmware/MyVersioFirmware.cpp` は、KORG ELECTRIBE R (ER-1) のOSCILLATOR / AMP / DELAYを参考にした、単発トリガーのパーカッションボイスです。信号経路は `OSC(ピッチエンベロープ付き) → AMP(エンベロープ) → DELAY(BPM同期、ピンポン)` です。
+
+> **既知の問題**: G（8vize、OSCピッチエンベロープ量）が実機で反応しない不具合を調査中。原因切り分けのため、現在L2は一時的にGの生値をそのまま表示するデバッグ用になっている（後述）。
 
 ### ハードウェア呼称（Ruina Versioパネル準拠、実機確認済み）
 
@@ -69,7 +71,7 @@ https://portal.noiseengineering.us/
 |---|---|---|---|
 | A | Blend | OSC 基本ピッチ (30Hz〜300Hz) | `KNOB_0` |
 | B | Center | DELAY タイム切替時のグライドタイム | `KNOB_6` |
-| C | Phase | DELAY フィードバック量 | `KNOB_4` |
+| C | Phase | DELAY フィードバック量（上限0.985） | `KNOB_4` |
 | D | Fold | OSC ピッチディケイタイム | `KNOB_2` |
 | E | DOOM | AMP ディケイタイム | `KNOB_3` |
 | F | Drive | DELAY ミックス (Dry/Wet) | `KNOB_5` |
@@ -101,14 +103,22 @@ DELAYタイムは`TEMPO_BPM`（`MyVersioFirmware.cpp`冒頭、現在136）を初
 ### トグルスイッチ
 
 - **T1**（3ポジション）: DELAYタイムの分周比（4分 / 8分 / 16分音符）
-- **T2**（3ポジション）: OSC波形（Sine / Square / Noise）
+- **T2**（3ポジション）: OSC波形（Sine / Square / **Clap**）
 
 分周比を切り替えた瞬間、ディレイタイムは即座に切り替わらず指定のグライドタイムでなめらかに遷移する。これによりフィードバックしている音のピッチが一瞬揺れる、テープ/BBDディレイのような効果が得られる。
+
+### DELAY（ピンポン）
+
+L/Rそれぞれに独立したディレイラインを持ち、Lの繰り返しをRへ、Rの繰り返しをLへ交互にフィードバックする「ピンポンディレイ」構成。ドライ音（原音）は常にL/R均等（センター）、繰り返し（エコー）だけが左右に交互に広がっていく。
+
+### Clap（旧Noise）
+
+T2をClapにすると、OSCがホワイトノイズ→バンドパスフィルター（中心1200Hz）を通った音になる。トリガー直後に短いノイズバーストを3回連打（808/909系ハンドクラップの模倣）し、その後は通常通りE（AMPディケイ）でテールが減衰する。Clap時はA/D/G（ピッチ関連）は使われない。
 
 ### LED
 
 - L1: AMPエンベロープの発音インジケーター
-- L2: 現在のOSC波形（Sine=赤 / Square=緑 / Noise=青、T2で切替）
+- L2: **[デバッグ中]** Gの生値をそのまま白色の明るさで表示（本来はOSC波形インジケーター。Gの不具合切り分けが済み次第、元に戻す）
 - L3: 現在のDELAY分周比（4分=赤 / 8分=緑 / 16分=青、T1で切替）
 - L4: DELAYの状態表示。色（緑→赤）でフィードバック量、明滅速度でディレイタイム（分周比のテンポ）を表す
 

@@ -59,17 +59,25 @@ DaisyVersio hw;
 
 Oscillator osc;
 WhiteNoise noise;
+Svf        clap_filter; // ハンドクラップのノイズをバンドパスで色付けする
 AdEnv      pitch_env;
 AdEnv      amp_env;
 
-static DelayLine<float, kMaxDelaySamples> DSY_SDRAM_BSS delay_line;
+static DelayLine<float, kMaxDelaySamples> DSY_SDRAM_BSS delay_line_l;
+static DelayLine<float, kMaxDelaySamples> DSY_SDRAM_BSS delay_line_r;
 
 enum Waveform
 {
     WAVE_MODE_SINE = 0,
     WAVE_MODE_SQUARE,
-    WAVE_MODE_NOISE,
+    WAVE_MODE_CLAP,
 };
+
+// ハンドクラップ用: 短いノイズバーストを3回連打した後、通常のAMPディケイ(E)で
+// テールを鳴らす。オフセット/長さは固定値(808/909系クラップの模倣)。
+constexpr float kClapBurstOnSec       = 0.003f;
+constexpr float kClapBurstOffsetsSec[3] = {0.f, 0.010f, 0.020f};
+constexpr float kClapBurstEndSec      = 0.030f; // これ以降はテール(ゲート常時オープン)
 
 float sample_rate;
 
@@ -93,6 +101,22 @@ float delay_led_phase            = 0.f; // 0〜1でディレイ1周期を表す�
 // INL外部クロック検出用(オーディオコールバック内でのみ使用)
 float    inl_prev_sample        = 0.f;
 uint32_t inl_samples_since_edge = 0;
+
+// ハンドクラップのバースト位置計算用。メインループでのトリガー時に0へ
+// リセットし、オーディオコールバックで毎サンプル加算する。
+volatile uint32_t clap_elapsed_samples = 0xFFFFFFFF;
+
+// 経過時間に応じて、クラップのノイズバーストが「鳴っている区間」かどうかを返す
+float ClapBurstGate(uint32_t elapsed_samples)
+{
+    float t = elapsed_samples / sample_rate;
+    for(int i = 0; i < 3; i++)
+    {
+        if(t >= kClapBurstOffsetsSec[i] && t < kClapBurstOffsetsSec[i] + kClapBurstOnSec)
+            return 1.f;
+    }
+    return t >= kClapBurstEndSec ? 1.f : 0.f;
+}
 
 float ExpMap(float knob01, float min_v, float max_v)
 {
@@ -135,7 +159,8 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
         delay_time_current_samples
             += (delay_time_target_samples - delay_time_current_samples)
                * delay_glide_coeff;
-        delay_line.SetDelay(delay_time_current_samples);
+        delay_line_l.SetDelay(delay_time_current_samples);
+        delay_line_r.SetDelay(delay_time_current_samples);
 
         // ディレイ1周期ごとに明滅させ、フィードバック(タップ)のタイミングを可視化する
         delay_led_phase += 1.f / delay_time_current_samples;
@@ -147,9 +172,10 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
         float amp_val   = amp_env.Process();
 
         float osc_out;
-        if(waveform_mode == WAVE_MODE_NOISE)
+        if(waveform_mode == WAVE_MODE_CLAP)
         {
-            osc_out = noise.Process();
+            clap_filter.Process(noise.Process());
+            osc_out = clap_filter.Band() * ClapBurstGate(clap_elapsed_samples);
         }
         else
         {
@@ -157,15 +183,18 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
             osc.SetFreq(freq);
             osc_out = osc.Process();
         }
+        clap_elapsed_samples++;
 
         float dry = osc_out * amp_val;
-        float wet = delay_line.Read();
-        delay_line.Write(dry + wet * feedback_amount);
 
-        float mixed = dry + wet * delay_mix;
+        // ピンポンディレイ: Lの繰り返しをRへ、Rの繰り返しをLへ交互にフィードバックする
+        float wet_l = delay_line_l.Read();
+        float wet_r = delay_line_r.Read();
+        delay_line_l.Write(dry + wet_r * feedback_amount);
+        delay_line_r.Write(wet_l * feedback_amount);
 
-        out[i]     = mixed;
-        out[i + 1] = mixed;
+        out[i]     = dry + wet_l * delay_mix;
+        out[i + 1] = dry + wet_r * delay_mix;
     }
 }
 
@@ -180,6 +209,11 @@ int main(void)
     osc.SetAmp(1.f);
     noise.Init();
 
+    clap_filter.Init(sample_rate);
+    clap_filter.SetFreq(1200.f);
+    clap_filter.SetRes(0.4f);
+    clap_filter.SetDrive(0.2f);
+
     pitch_env.Init(sample_rate);
     pitch_env.SetMin(0.f);
     pitch_env.SetMax(1.f);
@@ -192,7 +226,8 @@ int main(void)
     amp_env.SetTime(ADENV_SEG_ATTACK, 0.001f);
     amp_env.SetTime(ADENV_SEG_DECAY, 0.2f);
 
-    delay_line.Init();
+    delay_line_l.Init();
+    delay_line_r.Init();
     delay_time_target_samples  = SubdivisionSeconds(Switch3::POS_CENTER) * sample_rate;
     delay_time_current_samples = delay_time_target_samples;
 
@@ -216,7 +251,7 @@ int main(void)
                            ExpMap(hw.GetKnobValue(KNOB_D), 0.001f, 0.3f)); // D: OSCピッチディケイ
         amp_env.SetTime(ADENV_SEG_DECAY,
                          ExpMap(hw.GetKnobValue(KNOB_E), 0.005f, 1.f));    // E: AMPディケイ
-        feedback_amount = hw.GetKnobValue(KNOB_C) * 0.92f;                 // C: DELAYフィードバック
+        feedback_amount = hw.GetKnobValue(KNOB_C) * 0.985f;                // C: DELAYフィードバック(上限ギリギリ)
         delay_mix       = hw.GetKnobValue(KNOB_F);                        // F: DELAYミックス
 
         float glide_time_sec = ExpMap(hw.GetKnobValue(KNOB_B), 0.005f, 0.5f); // B: DELAYグライドタイム
@@ -231,7 +266,7 @@ int main(void)
         if(sw1 != last_sw1)
         {
             waveform_mode = (sw1 == Switch3::POS_UP)     ? WAVE_MODE_SINE
-                            : (sw1 == Switch3::POS_DOWN)  ? WAVE_MODE_NOISE
+                            : (sw1 == Switch3::POS_DOWN)  ? WAVE_MODE_CLAP
                                                            : WAVE_MODE_SQUARE;
             osc.SetWaveform(waveform_mode == WAVE_MODE_SQUARE
                                  ? Oscillator::WAVE_POLYBLEP_SQUARE
@@ -259,18 +294,20 @@ int main(void)
         {
             pitch_env.Trigger();
             amp_env.Trigger();
+            clap_elapsed_samples = 0;
         }
 
         float hit = amp_env.GetValue();
         hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
-        hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
-                  waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
-                  waveform_mode == WAVE_MODE_NOISE ? 1.f : 0.f);
+        // L2: [デバッグ中] Gの生値をそのまま白色の明るさとして表示
+        // (問題切り分け後、通常のOSC波形インジケーターに戻す予定)
+        float g_raw = hw.GetKnobValue(KNOB_G);
+        hw.SetLed(LED_L2, g_raw, g_raw, g_raw);
         hw.SetLed(LED_L3, sw0 == Switch3::POS_UP ? 1.f : 0.f,            // L3: DELAY分周比(T1)
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
                   sw0 == Switch3::POS_DOWN ? 1.f : 0.f);
         // L4: 色=フィードバック量(緑→赤)、明滅速度=ディレイタイム(分周比のテンポ)
-        float fb_norm = feedback_amount / 0.92f;
+        float fb_norm = feedback_amount / 0.985f;
         hw.SetLed(LED_L4,
                   fb_norm * delay_led_brightness,
                   (1.f - fb_norm) * delay_led_brightness,
