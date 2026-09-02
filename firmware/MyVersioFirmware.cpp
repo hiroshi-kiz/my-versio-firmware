@@ -316,10 +316,9 @@ int main(void)
 
         float hit = amp_env.GetValue();
         hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
-        // L2: [デバッグ中] Gの生値をそのまま白色の明るさとして表示
-        // (問題切り分け後、通常のOSC波形インジケーターに戻す予定)
-        float g_raw = hw.GetKnobValue(KNOB_G);
-        hw.SetLed(LED_L2, g_raw, g_raw, g_raw);
+        hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
+                  waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
+                  waveform_mode == WAVE_MODE_CLAP ? 1.f : 0.f);
         hw.SetLed(LED_L3, sw0 == Switch3::POS_UP ? 1.f : 0.f,            // L3: DELAY分周比(T1)
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
                   sw0 == Switch3::POS_DOWN ? 1.f : 0.f);
