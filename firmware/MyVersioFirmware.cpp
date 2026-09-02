@@ -59,7 +59,10 @@ DaisyVersio hw;
 
 Oscillator osc;
 WhiteNoise noise;
-Svf        clap_filter; // ハンドクラップのノイズをバンドパスで色付けする
+// ハンドクラップ用ノイズ整形: レゾナンス無しのHP→LPを直列にかけ、
+// 単一の共振バンドパスより耳当たりの柔らかい帯域制限ノイズを作る。
+Svf        clap_hp;
+Svf        clap_lp;
 AdEnv      pitch_env;
 AdEnv      amp_env;
 
@@ -75,10 +78,14 @@ enum Waveform
 
 // ハンドクラップ用: 短いノイズバーストを3回連打した後、通常のAMPディケイ(E)で
 // テールを鳴らす。オフセット/長さは固定値(808/909系クラップの模倣)。
-constexpr float kClapBurstOnSec       = 0.004f;
-constexpr float kClapBurstOffsetsSec[3] = {0.f, 0.012f, 0.024f};
-constexpr float kClapBurstEndSec      = 0.036f; // これ以降はテール(ゲート常時オープン)
-constexpr float kClapGateSmoothSec    = 0.002f; // バーストの角を丸めてクリック感を減らす
+constexpr float kClapBurstOnSec       = 0.006f;
+constexpr float kClapBurstOffsetsSec[3] = {0.f, 0.015f, 0.030f};
+constexpr float kClapBurstEndSec      = 0.045f; // これ以降はテール(ゲート常時オープン)
+constexpr float kClapGateSmoothSec    = 0.005f; // バーストの角を丸めてクリック感を減らす
+
+// Clap時、A(本来はOSCピッチ)でクラップのトーン(帯域の中心)を可変にする
+constexpr float kClapToneMinHz = 500.f;
+constexpr float kClapToneMaxHz = 3000.f;
 
 // ピンポンディレイの左右クロスフィード量。1.0で完全に左右交互(硬いピンポン)、
 // 0.5で完全にモノラルへ収束。1.0未満にすると繰り返すたびに徐々にセンターへ
@@ -183,10 +190,11 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
         float osc_out;
         if(waveform_mode == WAVE_MODE_CLAP)
         {
-            clap_filter.Process(noise.Process());
+            clap_hp.Process(noise.Process());
+            clap_lp.Process(clap_hp.High());
             float gate_target = ClapBurstGate(clap_elapsed_samples);
             clap_gate_smoothed += (gate_target - clap_gate_smoothed) * clap_gate_smooth_coeff;
-            osc_out = clap_filter.Band() * clap_gate_smoothed;
+            osc_out = clap_lp.Low() * clap_gate_smoothed;
         }
         else
         {
@@ -208,8 +216,10 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
         delay_line_l.Write(dry + feed_l * feedback_amount);
         delay_line_r.Write(feed_r * feedback_amount);
 
-        out[i]     = dry + wet_l * delay_mix;
-        out[i + 1] = dry + wet_r * delay_mix;
+        // フィードバックを高くした際に信号が1.0を超えて割れるのを防ぐ、
+        // ゆるいソフトクリップ(通常の音量では実質素通し)
+        out[i]     = tanhf(dry + wet_l * delay_mix);
+        out[i + 1] = tanhf(dry + wet_r * delay_mix);
     }
 }
 
@@ -224,10 +234,12 @@ int main(void)
     osc.SetAmp(1.f);
     noise.Init();
 
-    clap_filter.Init(sample_rate);
-    clap_filter.SetFreq(1000.f);
-    clap_filter.SetRes(0.15f);
-    clap_filter.SetDrive(0.f);
+    clap_hp.Init(sample_rate);
+    clap_hp.SetRes(0.f);
+    clap_hp.SetDrive(0.f);
+    clap_lp.Init(sample_rate);
+    clap_lp.SetRes(0.f);
+    clap_lp.SetDrive(0.f);
 
     clap_gate_smooth_coeff = 1.f - expf(-1.f / (kClapGateSmoothSec * sample_rate));
 
@@ -262,7 +274,12 @@ int main(void)
         // 誰も呼ばないため、明示的に呼び出す必要がある。
         hw.tap.Debounce();
 
-        base_freq       = ExpMap(hw.GetKnobValue(KNOB_A), 30.f, 300.f);   // A: OSC基本ピッチ
+        float knob_a    = hw.GetKnobValue(KNOB_A);
+        base_freq       = ExpMap(knob_a, 30.f, 300.f);                   // A: OSC基本ピッチ
+        // Clap時はAでバンドの中心(トーン/ピッチ感)を可変にする
+        float clap_center = ExpMap(knob_a, kClapToneMinHz, kClapToneMaxHz);
+        clap_hp.SetFreq(clap_center * 0.6f);
+        clap_lp.SetFreq(clap_center * 1.8f);
         pitch_depth_oct = hw.GetKnobValue(KNOB_G) * 4.f;                  // G: OSCピッチEG量
         pitch_env.SetTime(ADENV_SEG_DECAY,
                            ExpMap(hw.GetKnobValue(KNOB_D), 0.001f, 0.3f)); // D: OSCピッチディケイ
