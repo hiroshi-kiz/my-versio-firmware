@@ -226,13 +226,11 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
 // [調査用] daisy_versio.cppが使っていない、Daisy SeedのADC対応ピンの残り。
 // 物理Gノブが本当はどのピンに配線されているのかを実機でスキャンする。
 //
-// 前回の9候補のうち3つは、機械的に全ピンを照合し直した結果、実は他の
-// 機能と衝突していたことが判明したため除外した:
-//   PORTC,0(D15)=LED3青チャンネル, PORTA,0(D25)=LED2赤チャンネル,
-//   PORTA,1(D24)=ゲート入力(X-IN)。
-// (前回「候補8で反応」と見えたのはPORTA,0=LED2赤で、実際はGとは無関係に
-//  L3自体の表示が光っていただけだった。)
-constexpr int kNumScanCandidates = 6;
+// PORTA,0(D25/LED2赤)とPORTA,1(D24/ゲート入力)は、実際にその機能として
+// 動いているのを確認済みなので除外する。一方PORTC,0(D15/LED3青)は、
+// 現在のファームウェアでL4の青チャンネルを一度も使っていないため、
+// 本当にLEDとして配線されているか未確認 -> 念のため候補に戻す。
+constexpr int kNumScanCandidates = 7;
 constexpr int kTotalAdcChannels  = DaisyVersio::KNOB_LAST + kNumScanCandidates;
 
 void InitAdcWithScanCandidates()
@@ -243,9 +241,10 @@ void InitAdcWithScanCandidates()
         Pin(PORTA, 7),
         Pin(PORTC, 5),
         Pin(PORTB, 0),
+        Pin(PORTC, 0), // LED3青(D15)。未使用チャンネルなので念のため再テスト
         Pin(PORTC, 1),
         Pin(PORTC, 2),
-        Pin(PORTC, 3), // 候補6本 (index 7-12)
+        Pin(PORTC, 3), // 候補7本 (index 7-13)
     };
 
     AdcChannelConfig adc_cfg[kTotalAdcChannels];
