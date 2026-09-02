@@ -25,10 +25,10 @@ using namespace daisysp;
 constexpr int KNOB_A = DaisyVersio::KNOB_0; // Blend      -> OSC基本ピッチ
 constexpr int KNOB_B = DaisyVersio::KNOB_6; // Center     -> DELAYグライドタイム
 constexpr int KNOB_C = DaisyVersio::KNOB_4; // Phase      -> DELAYフィードバック
-constexpr int KNOB_D = DaisyVersio::KNOB_2; // Fold       -> OSCピッチディケイ
+constexpr int KNOB_D = DaisyVersio::KNOB_1; // Fold       -> OSCピッチディケイ (旧KNOB_2、D/G入れ替えを試験中)
 constexpr int KNOB_E = DaisyVersio::KNOB_3; // DOOM       -> AMPディケイ
 constexpr int KNOB_F = DaisyVersio::KNOB_5; // Drive      -> DELAYミックス
-constexpr int KNOB_G = DaisyVersio::KNOB_1; // 8vize      -> OSCピッチEG量
+constexpr int KNOB_G = DaisyVersio::KNOB_2; // 8vize      -> OSCピッチEG量 (旧KNOB_1、D/G入れ替えを試験中)
 
 constexpr int SW_T1 = DaisyVersio::SW_0; // UND/X/OVR -> DELAY分周比
 constexpr int SW_T2 = DaisyVersio::SW_1; // OFF/ON/TRK -> OSC波形
@@ -333,9 +333,9 @@ int main(void)
 
         float hit = amp_env.GetValue();
         hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
-        hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
-                  waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
-                  waveform_mode == WAVE_MODE_CLAP ? 1.f : 0.f);
+        // L2: [検証中] D/G入れ替え後、Gの生値を表示(Gを回した時だけ反応するはず)
+        float g_raw = hw.GetKnobValue(KNOB_G);
+        hw.SetLed(LED_L2, g_raw, g_raw, g_raw);
         hw.SetLed(LED_L3, sw0 == Switch3::POS_UP ? 1.f : 0.f,            // L3: DELAY分周比(T1)
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
                   sw0 == Switch3::POS_DOWN ? 1.f : 0.f);
