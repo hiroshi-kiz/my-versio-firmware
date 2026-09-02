@@ -44,8 +44,10 @@ volatile float feedback_amount   = 0.5f;
 volatile float delay_mix         = 0.5f;
 volatile float delay_glide_coeff = 0.01f;
 volatile float delay_time_target_samples = 0.f;
+volatile float delay_led_brightness       = 0.f;
 
 float delay_time_current_samples = 0.f;
+float delay_led_phase            = 0.f; // 0〜1でディレイ1周期を表す（LED明滅用）
 
 float ExpMap(float knob01, float min_v, float max_v)
 {
@@ -75,6 +77,12 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
             += (delay_time_target_samples - delay_time_current_samples)
                * delay_glide_coeff;
         delay_line.SetDelay(delay_time_current_samples);
+
+        // ディレイ1周期ごとに明滅させ、フィードバック(タップ)のタイミングを可視化する
+        delay_led_phase += 1.f / delay_time_current_samples;
+        if(delay_led_phase >= 1.f)
+            delay_led_phase -= 1.f;
+        delay_led_brightness = expf(-delay_led_phase * 8.f);
 
         float pitch_val = pitch_env.Process(); // 0(idle/末端) 〜 1(トリガー直後)
         float amp_val   = amp_env.Process();
@@ -185,7 +193,12 @@ int main(void)
         hw.SetLed(2, sw0 == Switch3::POS_UP ? 1.f : 0.f,
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
                   sw0 == Switch3::POS_DOWN ? 1.f : 0.f);
-        hw.SetLed(3, 0.f, 0.f, 0.f);
+        // LED_3: 色=フィードバック量(緑→赤)、明滅速度=ディレイタイム(分周比のテンポ)
+        float fb_norm = feedback_amount / 0.92f;
+        hw.SetLed(3,
+                  fb_norm * delay_led_brightness,
+                  (1.f - fb_norm) * delay_led_brightness,
+                  0.f);
         hw.UpdateLeds();
 
         System::Delay(1);

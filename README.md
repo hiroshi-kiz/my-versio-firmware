@@ -89,6 +89,7 @@ https://portal.noiseengineering.us/
 - LED_0: AMPエンベロープの発音インジケーター
 - LED_1: 現在のOSC波形（Sine=赤 / Square=緑 / Noise=青）
 - LED_2: 現在のDELAY分周比（4分=赤 / 8分=緑 / 16分=青）
+- LED_3: DELAYの状態表示。色（緑→赤）でフィードバック量、明滅速度でディレイタイム（分周比のテンポ）を表す
 
 ## 参考リンク
 
