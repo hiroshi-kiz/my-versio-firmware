@@ -61,13 +61,28 @@ https://portal.noiseengineering.us/
 
 `firmware/MyVersioFirmware.cpp` は、KORG ELECTRIBE R (ER-1) のOSCILLATOR / AMP / DELAYを参考にした、単発トリガーのパーカッションボイスです。信号経路は `OSC(ピッチエンベロープ付き) → AMP(エンベロープ) → DELAY(BPM同期)` です。
 
+### ハードウェア呼称（Ruina Versioパネル準拠）
+
+このプロジェクトでは、Ruina Versioのパネル印字に合わせて以下の呼称を使う。
+
+| 呼称 | パネル表記 / 内容 | ファームウェア上の実体 |
+|---|---|---|
+| A〜G | Blend, Center, Phase, Fold, DOOM, Drive, 8vize（7ノブ） | `KNOB_0`〜`KNOB_6`（**どれがどれに対応するかは実機確認待ち。下表はKNOB_n基準**） |
+| T1 | UND/X/OVR（3ポジショントグル） | `SW_0` |
+| T2 | OFF/ON/TRK（3ポジショントグル） | `SW_1` |
+| X | Smoosh（momentaryボタン） | `hw.tap` / `SwitchPressed()` |
+| TR | ゲート/トリガー入力ジャック | `hw.gate` |
+| INL / INR | Audio In L/R | (未使用) |
+| OUTL / OUTR | Audio Out L/R | ステレオ出力（現状L/R同一信号） |
+| L1〜L4 | 4つのRGB LED | `LED_0`〜`LED_3` |
+
 ### トリガー
 
-ゲート入力（またはパネルの momentary ボタン）の立ち上がりで発音します。
+**TR**（ゲート入力）または**X**（Smooshボタン）の立ち上がりで発音します。
 
-### ノブ
+### ノブ（KNOB_0〜6、A〜Gとの対応は要実機確認）
 
-| ノブ | パラメータ |
+| KNOB | パラメータ |
 |---|---|
 | KNOB_0 | OSC 基本ピッチ (30Hz〜300Hz) |
 | KNOB_1 | OSC ピッチエンベロープ量 (0〜4オクターブ) |
@@ -79,17 +94,17 @@ https://portal.noiseengineering.us/
 
 ### トグルスイッチ
 
-- **SW_0**（3ポジション）: DELAYタイムの分周比（4分 / 8分 / 16分音符）。BPMは`MyVersioFirmware.cpp`冒頭の`TEMPO_BPM`定数で固定（現在136）。外部クロックには依存しないので、変更したい場合はこの定数を書き換えて再ビルド・再書き込みする。
-- **SW_1**（3ポジション）: OSC波形（Sine / Square / Noise）
+- **T1**（3ポジション）: DELAYタイムの分周比（4分 / 8分 / 16分音符）。BPMは`MyVersioFirmware.cpp`冒頭の`TEMPO_BPM`定数で固定（現在136）。外部クロックには依存しないので、変更したい場合はこの定数を書き換えて再ビルド・再書き込みする。
+- **T2**（3ポジション）: OSC波形（Sine / Square / Noise）
 
 分周比を切り替えた瞬間、ディレイタイムは即座に切り替わらず指定のグライドタイムでなめらかに遷移する。これによりフィードバックしている音のピッチが一瞬揺れる、テープ/BBDディレイのような効果が得られる。
 
 ### LED
 
-- LED_0: AMPエンベロープの発音インジケーター
-- LED_1: 現在のOSC波形（Sine=赤 / Square=緑 / Noise=青）
-- LED_2: 現在のDELAY分周比（4分=赤 / 8分=緑 / 16分=青）
-- LED_3: DELAYの状態表示。色（緑→赤）でフィードバック量、明滅速度でディレイタイム（分周比のテンポ）を表す
+- L1: AMPエンベロープの発音インジケーター
+- L2: 現在のOSC波形（Sine=赤 / Square=緑 / Noise=青、T2で切替）
+- L3: 現在のDELAY分周比（4分=赤 / 8分=緑 / 16分=青、T1で切替）
+- L4: DELAYの状態表示。色（緑→赤）でフィードバック量、明滅速度でディレイタイム（分周比のテンポ）を表す
 
 ## 参考リンク
 
