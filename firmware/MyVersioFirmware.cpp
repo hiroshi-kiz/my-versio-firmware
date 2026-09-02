@@ -141,8 +141,9 @@ int main(void)
     hw.StartAdc();
     hw.StartAudio(AudioCallback);
 
-    int last_sw0 = -1;
-    int last_sw1 = -1;
+    int  last_sw0          = -1;
+    int  last_sw1          = -1;
+    bool last_switch_state = false; // Smooshボタンの立ち上がりエッジ検出用
 
     while(1)
     {
@@ -179,7 +180,13 @@ int main(void)
             last_sw1 = sw1;
         }
 
-        if(hw.gate.Trig() || hw.SwitchPressed())
+        // SwitchPressed()は押している間ずっとtrueを返すレベル検出のため、
+        // 立ち上がりエッジ(押した瞬間)だけを自前で検出する。
+        bool switch_state  = hw.SwitchPressed();
+        bool switch_rising = switch_state && !last_switch_state;
+        last_switch_state  = switch_state;
+
+        if(hw.gate.Trig() || switch_rising)
         {
             pitch_env.Trigger();
             amp_env.Trigger();
