@@ -223,16 +223,17 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
     }
 }
 
-// [調査用] daisy_versio.cppが使っていない、Daisy SeedのADC対応ピンの残り9本。
+// [調査用] daisy_versio.cppが使っていない、Daisy SeedのADC対応ピンの残り。
 // 物理Gノブが本当はどのピンに配線されているのかを実機でスキャンする。
 //
-// 以前の実装はADC稼働中に hw.seed.adc.Init() を4秒おきに呼び直しており、
-// これがハングの原因だった可能性が高い(L2が白いまま固まって見えた)。
-// 今回はDaisy Seedの最大16ch ADCを使い切り、既存7ノブ+候補9本を
-// 起動時に一度だけ同時初期化する。以後はADC設定に一切触れず、
-// どの候補の値をLEDに表示するかだけを切り替える。
-constexpr int kNumScanCandidates = 9;
-constexpr int kTotalAdcChannels  = DaisyVersio::KNOB_LAST + kNumScanCandidates; // 7+9=16
+// 前回の9候補のうち3つは、機械的に全ピンを照合し直した結果、実は他の
+// 機能と衝突していたことが判明したため除外した:
+//   PORTC,0(D15)=LED3青チャンネル, PORTA,0(D25)=LED2赤チャンネル,
+//   PORTA,1(D24)=ゲート入力(X-IN)。
+// (前回「候補8で反応」と見えたのはPORTA,0=LED2赤で、実際はGとは無関係に
+//  L3自体の表示が光っていただけだった。)
+constexpr int kNumScanCandidates = 6;
+constexpr int kTotalAdcChannels  = DaisyVersio::KNOB_LAST + kNumScanCandidates;
 
 void InitAdcWithScanCandidates()
 {
@@ -242,12 +243,9 @@ void InitAdcWithScanCandidates()
         Pin(PORTA, 7),
         Pin(PORTC, 5),
         Pin(PORTB, 0),
-        Pin(PORTC, 0),
         Pin(PORTC, 1),
         Pin(PORTC, 2),
-        Pin(PORTC, 3),
-        Pin(PORTA, 0),
-        Pin(PORTA, 1), // 候補9本 (index 7-15)
+        Pin(PORTC, 3), // 候補6本 (index 7-12)
     };
 
     AdcChannelConfig adc_cfg[kTotalAdcChannels];
