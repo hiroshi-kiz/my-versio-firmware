@@ -345,7 +345,8 @@ int main(void)
     amp_env.SetTime(ADENV_SEG_DECAY, 0.2f);
     // 直線的な減衰だと余韻が感じられないため、指数的な減衰カーブにする
     // (立ち上がりは0.001秒と短いため、この設定による影響は無視できる)。
-    amp_env.SetCurve(-40.f);
+    // -40は急すぎて設定時間の序盤でほぼ無音になってしまったため、緩やかな値にした。
+    amp_env.SetCurve(-8.f);
 
     delay_line_l.Init();
     delay_line_r.Init();
@@ -371,7 +372,7 @@ int main(void)
         float clap_center = ExpMap(knob_a, kClapToneMinHz, kClapToneMaxHz);
         clap_hp.SetFreq(clap_center * 0.6f);
         clap_lp.SetFreq(clap_center * 1.8f);
-        mod_depth_oct = (hw.GetKnobValue(KNOB_B) - 0.5f) * 6.f; // B: Mod Depth(-3〜+3oct, 中央=無効果)
+        mod_depth_oct = (hw.GetKnobValue(KNOB_B) - 0.5f) * 3.f; // B: Mod Depth(-1.5〜+1.5oct, 中央=無効果)
 
         float knob_d = hw.GetKnobValue(KNOB_D);
         if(mod_type == MOD_ENVELOPE)

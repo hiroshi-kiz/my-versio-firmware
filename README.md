@@ -79,7 +79,7 @@ https://portal.noiseengineering.us/
 | 呼称 | パネル表記 | パラメータ | ファームウェア上の実体 |
 |---|---|---|---|
 | A | Blend | OSC 基本ピッチ (30Hz〜300Hz) / Clap時はトーン(帯域中心) | `KNOB_0` |
-| B | Center | Mod Depth (-3〜+3オクターブ、バイポーラ、中央=無効果) | `KNOB_6` |
+| B | Center | Mod Depth (-1.5〜+1.5オクターブ、バイポーラ、中央=無効果) | `KNOB_6` |
 | C | Phase | DELAY フィードバック量（上限0.985） | `KNOB_4` |
 | D | Fold | Mod Speed (0.1〜50Hz) / Mod Type=Envelope時はピッチディケイタイム。**時々Gと反応が入れ替わる、上記参照** | `KNOB_2` |
 | E | DOOM | AMP ディケイタイム（指数カーブで、自然な余韻が残る減衰） | `KNOB_3` |
