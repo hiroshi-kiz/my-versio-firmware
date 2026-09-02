@@ -28,7 +28,13 @@ constexpr int KNOB_C = DaisyVersio::KNOB_4; // Phase      -> DELAYフィード�
 constexpr int KNOB_D = DaisyVersio::KNOB_2; // Fold       -> OSCピッチディケイ
 constexpr int KNOB_E = DaisyVersio::KNOB_3; // DOOM       -> AMPディケイ
 constexpr int KNOB_F = DaisyVersio::KNOB_5; // Drive      -> DELAYミックス
-constexpr int KNOB_G = DaisyVersio::KNOB_1; // 8vize      -> OSCピッチEG量 (未解決: 実機で無反応。D/G入替でも直らずBで再現したため保留中)
+// G(8vize)は未解決の問題により保留中: 実機で無反応。KNOB_0〜6の全パターン、
+// および他ADC対応ピン全16本のスキャンでも反応するチャンネルが見つからず、
+// 一方でNoise Engineering純正ファームウェア(2種)では正常動作を確認済み。
+// ハードウェアは正常だが、コミュニティ版libDaisyの daisy_versio.h が
+// 対応していない経路(マルチプレクサ等)で配線されている可能性が高い。
+// ソフトウェアでは特定できなかったため、OSCピッチEG量は固定値で運用する。
+constexpr float kFixedPitchDepthOct = 2.f; // 本来はGが担当する値(0〜4)の固定版
 
 constexpr int SW_T1 = DaisyVersio::SW_0; // UND/X/OVR -> DELAY分周比
 constexpr int SW_T2 = DaisyVersio::SW_1; // OFF/ON/TRK -> OSC波形
@@ -223,35 +229,19 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
     }
 }
 
-// [調査用] daisy_versio.cppが使っていない、Daisy SeedのADC対応ピンの残り。
-// 物理Gノブが本当はどのピンに配線されているのかを実機でスキャンする。
-//
-// PORTA,0(D25/LED2赤)とPORTA,1(D24/ゲート入力)は、実際にその機能として
-// 動いているのを確認済みなので除外する。一方PORTC,0(D15/LED3青)は、
-// 現在のファームウェアでL4の青チャンネルを一度も使っていないため、
-// 本当にLEDとして配線されているか未確認 -> 念のため候補に戻す。
-constexpr int kNumScanCandidates = 7;
-constexpr int kTotalAdcChannels  = DaisyVersio::KNOB_LAST + kNumScanCandidates;
-
-void InitAdcWithScanCandidates()
+// KNOB_0〜6のADCサンプリング時間を、libDaisyのデフォルト(8.5サイクル、かなり
+// 高速)より長めにしておく。G調査の過程で導入したが、クロストーク自体の
+// 解決策ではなかった。動作を変える理由はないのでそのまま残す。
+void InitKnobAdc()
 {
     using namespace daisy::seed;
-    Pin pins[kTotalAdcChannels] = {
-        D21, D22, D28, D23, D16, D17, D19, // 既存7ノブ (index 0-6)
-        Pin(PORTA, 7),
-        Pin(PORTC, 5),
-        Pin(PORTB, 0),
-        Pin(PORTC, 0), // LED3青(D15)。未使用チャンネルなので念のため再テスト
-        Pin(PORTC, 1),
-        Pin(PORTC, 2),
-        Pin(PORTC, 3), // 候補7本 (index 7-13)
-    };
+    Pin pins[DaisyVersio::KNOB_LAST] = {D21, D22, D28, D23, D16, D17, D19};
 
-    AdcChannelConfig adc_cfg[kTotalAdcChannels];
-    for(int i = 0; i < kTotalAdcChannels; i++)
+    AdcChannelConfig adc_cfg[DaisyVersio::KNOB_LAST];
+    for(int i = 0; i < DaisyVersio::KNOB_LAST; i++)
         adc_cfg[i].InitSingle(pins[i], AdcChannelConfig::SPEED_64CYCLES_5);
 
-    hw.seed.adc.Init(adc_cfg, kTotalAdcChannels);
+    hw.seed.adc.Init(adc_cfg, DaisyVersio::KNOB_LAST);
     for(int i = 0; i < DaisyVersio::KNOB_LAST; i++)
         hw.knobs[i].Init(hw.seed.adc.GetPtr(i), hw.AudioCallbackRate(), true);
 }
@@ -260,7 +250,7 @@ int main(void)
 {
     hw.Init();
     hw.SetAudioBlockSize(4);
-    InitAdcWithScanCandidates();
+    InitKnobAdc();
     sample_rate = hw.AudioSampleRate();
 
     osc.Init(sample_rate);
@@ -301,14 +291,6 @@ int main(void)
     bool     last_switch_state = false; // X-SWの立ち上がりエッジ検出用
     uint32_t last_tap_time_ms  = 0;
 
-    // [調査用] ピンスキャン制御
-    constexpr uint32_t kScanCandidateHoldMs = 4000;
-    constexpr uint32_t kScanBlinkPhaseMs    = 2000;
-    constexpr uint32_t kScanBlinkPeriodMs   = 220;
-    constexpr uint32_t kScanBlinkOnMs       = 100;
-    int                scan_index          = 0;
-    uint32_t           scan_start_ms       = System::GetNow();
-
     while(1)
     {
         hw.ProcessAnalogControls();
@@ -322,7 +304,7 @@ int main(void)
         float clap_center = ExpMap(knob_a, kClapToneMinHz, kClapToneMaxHz);
         clap_hp.SetFreq(clap_center * 0.6f);
         clap_lp.SetFreq(clap_center * 1.8f);
-        pitch_depth_oct = hw.GetKnobValue(KNOB_G) * 4.f;                  // G: OSCピッチEG量
+        pitch_depth_oct = kFixedPitchDepthOct; // G: 現状使用不可のため固定値
         pitch_env.SetTime(ADENV_SEG_DECAY,
                            ExpMap(hw.GetKnobValue(KNOB_D), 0.001f, 0.3f)); // D: OSCピッチディケイ
         amp_env.SetTime(ADENV_SEG_DECAY,
@@ -373,34 +355,11 @@ int main(void)
             clap_elapsed_samples = 0;
         }
 
-        // [調査用] ピンスキャン表示: ADC設定には一切触れず、どの候補チャンネル
-        // (index 7-15)の値をLEDに表示するかだけを4秒ごとに切り替える。
-        // 最初の2秒はL1が(候補番号+1)回白く点滅して現在の候補番号を示し、
-        // 残り2秒はL2にその候補の生値を表示する。
-        uint32_t scan_now     = System::GetNow();
-        uint32_t scan_elapsed = scan_now - scan_start_ms;
-        if(scan_elapsed >= kScanCandidateHoldMs)
-        {
-            scan_index    = (scan_index + 1) % kNumScanCandidates;
-            scan_start_ms = scan_now;
-            scan_elapsed  = 0;
-        }
-
-        if(scan_elapsed < kScanBlinkPhaseMs)
-        {
-            uint32_t slot        = scan_elapsed / kScanBlinkPeriodMs;
-            uint32_t pos_in_slot = scan_elapsed % kScanBlinkPeriodMs;
-            bool     blink_on = (slot <= (uint32_t)scan_index) && (pos_in_slot < kScanBlinkOnMs);
-            hw.SetLed(LED_L1, blink_on ? 1.f : 0.f, blink_on ? 1.f : 0.f, blink_on ? 1.f : 0.f);
-            hw.SetLed(LED_L2, 0.f, 0.f, 0.f);
-        }
-        else
-        {
-            float candidate_raw
-                = hw.seed.adc.GetFloat(DaisyVersio::KNOB_LAST + scan_index);
-            hw.SetLed(LED_L1, 0.f, 0.f, 0.f);
-            hw.SetLed(LED_L2, candidate_raw, candidate_raw, candidate_raw);
-        }
+        float hit = amp_env.GetValue();
+        hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
+        hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
+                  waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
+                  waveform_mode == WAVE_MODE_CLAP ? 1.f : 0.f);
         hw.SetLed(LED_L3, sw0 == Switch3::POS_UP ? 1.f : 0.f,            // L3: DELAY分周比(T1)
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
                   sw0 == Switch3::POS_DOWN ? 1.f : 0.f);

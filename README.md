@@ -61,7 +61,14 @@ https://portal.noiseengineering.us/
 
 `firmware/MyVersioFirmware.cpp` は、KORG ELECTRIBE R (ER-1) のOSCILLATOR / AMP / DELAYを参考にした、単発トリガーのパーカッションボイスです。信号経路は `OSC(ピッチエンベロープ付き) → AMP(エンベロープ) → DELAY(BPM同期、ピンポン)` です。
 
-> **既知の問題**: G（8vize、OSCピッチエンベロープ量）が実機で反応しない。診断の結果、G自体を動かしても無反応な一方、**Dを動かすとG(KNOB_1)のADC値が変化する**ことを確認した。他のノブ(A/B/C/E/F)ではこの反応は起きないため、GのADC入力配線がハードウェア的に浮いていて、隣接するDの信号を拾っている(クロストーク)可能性が高い。ファームウェアでは修正できない可能性がある。実機の配線・半田付けの確認、あるいはNoise Engineeringサポートへの問い合わせを検討中。
+> **既知の問題（保留中）**: G（8vize、本来はOSCピッチエンベロープ量）が実機で反応しない。
+>
+> 調査の結果:
+> - KNOB_0〜6の全パターンを試したが、Gが正しく反応するチャンネルは見つからなかった
+> - Daisy Seedの全ADC対応ピン(16本)をスキャンしても、Gの動きに反応するピンは見つからなかった
+> - 一方、Noise Engineering純正ファームウェア(2種類)では、同じ物理ノブが問題なく動作することを確認済み → **ハードウェアは正常**
+>
+> つまりハードウェア自体は壊れておらず、コミュニティ版`libDaisy`の`daisy_versio.h`が対応していない経路（アナログマルチプレクサ等）でこの1ノブだけ配線されている可能性が高い。ソフトウェアだけでは特定できなかったため、現状は**保留とし、OSCピッチエンベロープ量は`kFixedPitchDepthOct`（`MyVersioFirmware.cpp`、現在2.0オクターブ）の固定値で運用**している。実機の導通確認、またはNoise Engineering/Daisyコミュニティへの問い合わせができれば再挑戦したい。
 
 ### ハードウェア呼称（Ruina Versioパネル準拠、実機確認済み）
 
@@ -75,7 +82,7 @@ https://portal.noiseengineering.us/
 | D | Fold | OSC ピッチディケイタイム | `KNOB_2` |
 | E | DOOM | AMP ディケイタイム | `KNOB_3` |
 | F | Drive | DELAY ミックス (Dry/Wet) | `KNOB_5` |
-| G | 8vize | OSC ピッチエンベロープ量 (0〜4オクターブ) | `KNOB_1` |
+| G | 8vize | (現状無効。保留中。上記参照) | `KNOB_1`(未使用) |
 | T1 | UND/X/OVR（3ポジショントグル） | DELAY分周比切替 | `SW_0` |
 | T2 | OFF/ON/TRK（3ポジショントグル） | OSC波形切替 | `SW_1` |
 | X-SW | Smooshのボタン部分 | タップテンポ | `hw.tap` / `SwitchPressed()` |
