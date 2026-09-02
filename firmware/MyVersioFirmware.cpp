@@ -17,15 +17,15 @@ using namespace daisysp;
 //
 // 役割分担:
 //   X-IN  : ドラムのトリガー専用
-//   X-SW  : タップテンポ入力
+//   X-SW  : Mod Type(ピッチモジュレーションの種類)を押すたびに循環切替
+//           (KORG ER-1のOSCILLATORセクションと同じ操作感。ER-1本体でも
+//            Mod Typeはノブではなくボタンで循環切替する仕様)
 //   INL   : 外部クロック入力(オーディオ入力をゲートのように閾値検出して使う)
-//   X-SWとINLはどちらも同じ tempo_period_sec を上書きする。
-//   最後に信号があった方が優先される(明示的な排他制御はしない、最も単純な方式)。
 // =====================================================================
 constexpr int KNOB_A = DaisyVersio::KNOB_0; // Blend      -> OSC基本ピッチ
-constexpr int KNOB_B = DaisyVersio::KNOB_6; // Center     -> DELAYグライドタイム
+constexpr int KNOB_B = DaisyVersio::KNOB_6; // Center     -> Mod Depth
 constexpr int KNOB_C = DaisyVersio::KNOB_4; // Phase      -> DELAYフィードバック
-constexpr int KNOB_D = DaisyVersio::KNOB_2; // Fold       -> OSCピッチディケイ
+constexpr int KNOB_D = DaisyVersio::KNOB_2; // Fold       -> Mod Speed(Envelope時はディケイ)
 constexpr int KNOB_E = DaisyVersio::KNOB_3; // DOOM       -> AMPディケイ
 constexpr int KNOB_F = DaisyVersio::KNOB_5; // Drive      -> DELAYミックス
 // G(8vize)は未解決の問題により保留中: 実機で無反応。KNOB_0〜6の全パターン、
@@ -33,11 +33,22 @@ constexpr int KNOB_F = DaisyVersio::KNOB_5; // Drive      -> DELAYミックス
 // 一方でNoise Engineering純正ファームウェア(2種)では正常動作を確認済み。
 // ハードウェアは正常だが、コミュニティ版libDaisyの daisy_versio.h が
 // 対応していない経路(マルチプレクサ等)で配線されている可能性が高い。
-// ソフトウェアでは特定できなかったため、OSCピッチEG量は固定値で運用する。
-constexpr float kFixedPitchDepthOct = 2.f; // 本来はGが担当する値(0〜4)の固定版
 
 constexpr int SW_T1 = DaisyVersio::SW_0; // UND/X/OVR -> DELAY分周比
 constexpr int SW_T2 = DaisyVersio::SW_1; // OFF/ON/TRK -> OSC波形
+
+// KORG ER-1のOSCILLATOR Mod Typeを参考にした、ピッチモジュレーションの種類。
+// ER-1本体と同じ6種類。X-SWを押すたびに順に切り替わる。
+enum ModType
+{
+    MOD_SAW_DOWN = 0, // 周期的に下降するのこぎり波
+    MOD_SQUARE,       // 2つの音高を交互に
+    MOD_TRIANGLE,     // 周期的に上下する三角波
+    MOD_SAMPLE_HOLD,  // 周期ごとにランダムな値へジャンプ
+    MOD_NOISE,        // 連続的なノイズを加算(スネア向き、ER-1準拠)
+    MOD_ENVELOPE,     // 単発のピッチディケイ(キック/タム向き、ER-1準拠)
+    MOD_TYPE_LAST
+};
 
 constexpr size_t LED_L1 = 0;
 constexpr size_t LED_L2 = 1;
@@ -98,6 +109,10 @@ constexpr float kClapToneMaxHz = 3000.f;
 // 収束していく(＝エコーが減衰しながら左右の広がりが狭まる)。
 constexpr float kDelayCrossFeed = 0.75f;
 
+// DELAYタイム切替時のグライドタイム。以前はB(Center)が担当していたが、
+// Mod Depthに転用したため固定値にした。
+constexpr float kFixedGlideTimeSec = 0.08f;
+
 float sample_rate;
 
 // X-SW(タップテンポ)とINL(外部クロック)の両方から書き換えられる、
@@ -106,8 +121,10 @@ volatile float tempo_period_sec = 60.f / TEMPO_BPM;
 
 // 制御レート(メインループ)で更新され、オーディオコールバックから参照される値
 volatile int   waveform_mode     = WAVE_MODE_SINE;
+volatile int   mod_type          = MOD_ENVELOPE;
 volatile float base_freq         = 60.f;
-volatile float pitch_depth_oct   = 2.f;
+volatile float mod_depth_oct     = 0.f; // B: -3〜+3オクターブ(バイポーラ、中央=無効果)
+volatile float mod_speed_hz      = 2.f; // D: LFOレート(Envelope時はディケイタイムとして解釈)
 volatile float feedback_amount   = 0.5f;
 volatile float delay_mix         = 0.5f;
 volatile float delay_glide_coeff = 0.01f;
@@ -116,6 +133,11 @@ volatile float delay_led_brightness       = 0.f;
 
 float delay_time_current_samples = 0.f;
 float delay_led_phase            = 0.f; // 0〜1でディレイ1周期を表す（LED明滅用）
+
+// ピッチモジュレーション用(オーディオコールバック内でのみ使用)
+WhiteNoise mod_noise;      // Sample&Hold/Noiseタイプ用の乱数源
+float      mod_lfo_phase = 0.f; // フリーランのLFO位相(0〜1)
+float      mod_sh_value  = 0.f; // Sample&Holdで保持中の値
 
 // INL外部クロック検出用(オーディオコールバック内でのみ使用)
 float    inl_prev_sample        = 0.f;
@@ -204,7 +226,45 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
         }
         else
         {
-            float freq = base_freq * powf(2.f, pitch_val * pitch_depth_oct);
+            float mod_val; // -1〜+1のバイポーラ形状(Envelopeのみ0〜1)
+            if(mod_type == MOD_ENVELOPE)
+            {
+                mod_val = pitch_val; // 0(idle/末端)〜1(トリガー直後)
+            }
+            else
+            {
+                mod_lfo_phase += mod_speed_hz / sample_rate;
+                bool wrapped = false;
+                if(mod_lfo_phase >= 1.f)
+                {
+                    mod_lfo_phase -= 1.f;
+                    wrapped = true;
+                }
+
+                switch(mod_type)
+                {
+                    case MOD_SAW_DOWN:
+                        mod_val = 1.f - 2.f * mod_lfo_phase;
+                        break;
+                    case MOD_SQUARE:
+                        mod_val = (mod_lfo_phase < 0.5f) ? 1.f : -1.f;
+                        break;
+                    case MOD_TRIANGLE:
+                        mod_val = 4.f * fabsf(mod_lfo_phase - 0.5f) - 1.f;
+                        break;
+                    case MOD_SAMPLE_HOLD:
+                        if(wrapped)
+                            mod_sh_value = mod_noise.Process();
+                        mod_val = mod_sh_value;
+                        break;
+                    case MOD_NOISE:
+                    default:
+                        mod_val = mod_noise.Process();
+                        break;
+                }
+            }
+
+            float freq = base_freq * powf(2.f, mod_val * mod_depth_oct);
             osc.SetFreq(freq);
             osc_out = osc.Process();
         }
@@ -257,6 +317,7 @@ int main(void)
     osc.SetWaveform(Oscillator::WAVE_SIN);
     osc.SetAmp(1.f);
     noise.Init();
+    mod_noise.Init();
 
     clap_hp.Init(sample_rate);
     clap_hp.SetRes(0.f);
@@ -266,6 +327,7 @@ int main(void)
     clap_lp.SetDrive(0.f);
 
     clap_gate_smooth_coeff = 1.f - expf(-1.f / (kClapGateSmoothSec * sample_rate));
+    delay_glide_coeff      = 1.f - expf(-1.f / (kFixedGlideTimeSec * sample_rate));
 
     pitch_env.Init(sample_rate);
     pitch_env.SetMin(0.f);
@@ -287,9 +349,8 @@ int main(void)
     hw.StartAdc();
     hw.StartAudio(AudioCallback);
 
-    int      last_sw1          = -1;
-    bool     last_switch_state = false; // X-SWの立ち上がりエッジ検出用
-    uint32_t last_tap_time_ms  = 0;
+    int  last_sw1          = -1;
+    bool last_switch_state = false; // X-SWの立ち上がりエッジ検出用
 
     while(1)
     {
@@ -304,16 +365,18 @@ int main(void)
         float clap_center = ExpMap(knob_a, kClapToneMinHz, kClapToneMaxHz);
         clap_hp.SetFreq(clap_center * 0.6f);
         clap_lp.SetFreq(clap_center * 1.8f);
-        pitch_depth_oct = kFixedPitchDepthOct; // G: 現状使用不可のため固定値
-        pitch_env.SetTime(ADENV_SEG_DECAY,
-                           ExpMap(hw.GetKnobValue(KNOB_D), 0.001f, 0.3f)); // D: OSCピッチディケイ
+        mod_depth_oct = (hw.GetKnobValue(KNOB_B) - 0.5f) * 6.f; // B: Mod Depth(-3〜+3oct, 中央=無効果)
+
+        float knob_d = hw.GetKnobValue(KNOB_D);
+        if(mod_type == MOD_ENVELOPE)
+            pitch_env.SetTime(ADENV_SEG_DECAY, ExpMap(knob_d, 0.001f, 0.3f)); // D: ピッチディケイ
+        else
+            mod_speed_hz = ExpMap(knob_d, 0.1f, 50.f); // D: Mod Speed(LFOレート)
+
         amp_env.SetTime(ADENV_SEG_DECAY,
                          ExpMap(hw.GetKnobValue(KNOB_E), 0.005f, 1.f));    // E: AMPディケイ
         feedback_amount = hw.GetKnobValue(KNOB_C) * 0.985f;                // C: DELAYフィードバック(上限ギリギリ)
         delay_mix       = hw.GetKnobValue(KNOB_F);                        // F: DELAYミックス
-
-        float glide_time_sec = ExpMap(hw.GetKnobValue(KNOB_B), 0.005f, 0.5f); // B: DELAYグライドタイム
-        delay_glide_coeff    = 1.f - expf(-1.f / (glide_time_sec * sample_rate));
 
         int sw0 = hw.sw[SW_T1].Read(); // T1: DELAY分周比
         // tempo_period_secがX-SW/INLから継続的に更新されるため、
@@ -338,15 +401,8 @@ int main(void)
         bool switch_rising = switch_state && !last_switch_state;
         last_switch_state  = switch_state;
 
-        if(switch_rising) // X-SW: タップテンポ
-        {
-            uint32_t now_ms   = System::GetNow();
-            uint32_t interval = now_ms - last_tap_time_ms;
-            float    interval_sec = interval / 1000.f;
-            if(interval_sec > kMinTempoPeriodSec && interval_sec < kMaxTempoPeriodSec)
-                tempo_period_sec = interval_sec;
-            last_tap_time_ms = now_ms;
-        }
+        if(switch_rising) // X-SW: Mod Typeを次に進める
+            mod_type = (mod_type + 1) % MOD_TYPE_LAST;
 
         if(hw.gate.Trig()) // X-IN: ドラムのトリガー
         {
