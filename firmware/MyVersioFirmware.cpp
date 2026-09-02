@@ -223,10 +223,30 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
     }
 }
 
+// DaisyVersio::Init()はKNOB_0〜6のADCサンプリング時間をデフォルト(8.5サイクル、
+// かなり高速)のまま初期化する。これが原因と思われるチャンネル間クロストーク
+// (Gが常に無反応/別のノブに反応が漏れる)を切り分けるため、同じ7ピンを
+// より長いサンプリング時間で自前で再初期化する。
+void ReinitKnobAdcWithLongerSampleTime()
+{
+    using namespace daisy::seed;
+    Pin pins[DaisyVersio::KNOB_LAST]
+        = {D21, D22, D28, D23, D16, D17, D19};
+
+    AdcChannelConfig adc_cfg[DaisyVersio::KNOB_LAST];
+    for(int i = 0; i < DaisyVersio::KNOB_LAST; i++)
+        adc_cfg[i].InitSingle(pins[i], AdcChannelConfig::SPEED_64CYCLES_5);
+
+    hw.seed.adc.Init(adc_cfg, DaisyVersio::KNOB_LAST);
+    for(int i = 0; i < DaisyVersio::KNOB_LAST; i++)
+        hw.knobs[i].Init(hw.seed.adc.GetPtr(i), hw.AudioCallbackRate(), true);
+}
+
 int main(void)
 {
     hw.Init();
     hw.SetAudioBlockSize(4);
+    ReinitKnobAdcWithLongerSampleTime();
     sample_rate = hw.AudioSampleRate();
 
     osc.Init(sample_rate);
@@ -333,9 +353,9 @@ int main(void)
 
         float hit = amp_env.GetValue();
         hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
-        hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
-                  waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
-                  waveform_mode == WAVE_MODE_CLAP ? 1.f : 0.f);
+        // L2: [検証中] ADCサンプリング時間変更後、Gの生値を表示
+        float g_raw = hw.GetKnobValue(KNOB_G);
+        hw.SetLed(LED_L2, g_raw, g_raw, g_raw);
         hw.SetLed(LED_L3, sw0 == Switch3::POS_UP ? 1.f : 0.f,            // L3: DELAY分周比(T1)
                   sw0 == Switch3::POS_CENTER ? 1.f : 0.f,
                   sw0 == Switch3::POS_DOWN ? 1.f : 0.f);
