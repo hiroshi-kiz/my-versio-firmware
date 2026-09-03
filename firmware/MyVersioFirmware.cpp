@@ -65,8 +65,11 @@ constexpr size_t LED_L4 = 3;
 constexpr float kMinTempoPeriodSec = 0.05f; // 1200 BPM相当
 constexpr float kMaxTempoPeriodSec = 3.0f;  // 20 BPM相当
 
-// INLのクロック検出しきい値(0〜1、Eurorackのゲート/トリガーを想定)
-constexpr float kClockThreshold = 0.3f;
+// INLのクロック検出しきい値(ヒステリシス付き)。単一のしきい値だと、信号に
+// 乗ったノイズ/リンギングで1回のパルスに対して何度も誤検出してしまうため、
+// 「上がる時」と「下がる時」で別のしきい値を使うシュミットトリガー方式にする。
+constexpr float kClockThresholdHigh = 0.35f;
+constexpr float kClockThresholdLow  = 0.15f;
 
 // ディレイバッファの最大長（サンプル数）。48kHz換算で1秒分確保しておけば
 // BPM60の4分音符までカバーできる。SDRAM(64MB)に置くことで内蔵SRAMを圧迫しない。
@@ -143,7 +146,7 @@ float           mod_sh_value  = 0.f;   // Sample&Holdで保持中の値(オー�
 constexpr float kClapGain = 3.0f;
 
 // INL外部クロック検出用(オーディオコールバック内でのみ使用)
-float    inl_prev_sample        = 0.f;
+bool     inl_gate_high          = false; // シュミットトリガーの現在の状態
 uint32_t inl_samples_since_edge = 0;
 
 // [調査用] INLの信号レベル(ピークホールド)。L1で目視確認するためのデバッグ用。
@@ -194,17 +197,22 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
     for(size_t i = 0; i < size; i += 2)
     {
         // INL: オーディオ入力(L)を外部クロックとして扱い、しきい値超えの
-        // 立ち上がりエッジ間隔をテンポとして採用する。
+        // 立ち上がりエッジ間隔をテンポとして採用する。ノイズ/リンギングによる
+        // 多重検出を防ぐため、ヒステリシス(シュミットトリガー)を使う。
         inl_samples_since_edge++;
         float inl_sample = in[i];
-        if(inl_sample > kClockThreshold && inl_prev_sample <= kClockThreshold)
+        if(!inl_gate_high && inl_sample > kClockThresholdHigh)
         {
+            inl_gate_high = true;
             float interval_sec = inl_samples_since_edge / sample_rate;
             if(interval_sec > kMinTempoPeriodSec && interval_sec < kMaxTempoPeriodSec)
                 tempo_period_sec = interval_sec;
             inl_samples_since_edge = 0;
         }
-        inl_prev_sample = inl_sample;
+        else if(inl_gate_high && inl_sample < kClockThresholdLow)
+        {
+            inl_gate_high = false;
+        }
 
         // [調査用] 直近の制御ループ1回分(約1ms)の最大振幅を記録する。
         // 減衰式のピークホールドだと尾を引いて分かりにくいため、
