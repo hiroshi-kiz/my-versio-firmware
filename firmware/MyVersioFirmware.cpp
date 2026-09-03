@@ -149,9 +149,6 @@ constexpr float kClapGain = 3.0f;
 bool     inl_gate_high          = false; // シュミットトリガーの現在の状態
 uint32_t inl_samples_since_edge = 0;
 
-// [調査用] INLの信号レベル(ピークホールド)。L1で目視確認するためのデバッグ用。
-volatile float inl_peak_debug = 0.f;
-
 float clap_gate_smoothed  = 0.f; // バーストゲートの角を丸めた後の値
 float clap_gate_smooth_coeff = 0.f; // main()でsample_rate確定後に計算
 
@@ -213,13 +210,6 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
         {
             inl_gate_high = false;
         }
-
-        // [調査用] 直近の制御ループ1回分(約1ms)の最大振幅を記録する。
-        // 減衰式のピークホールドだと尾を引いて分かりにくいため、
-        // メインループ側で毎回リセットする方式にした。
-        float inl_abs = fabsf(inl_sample);
-        if(inl_abs > inl_peak_debug)
-            inl_peak_debug = inl_abs;
 
         delay_time_current_samples
             += (delay_time_target_samples - delay_time_current_samples)
@@ -439,14 +429,8 @@ int main(void)
             mod_lfo_phase = 0.f;
         }
 
-        // [調査用] L1に直近1ms分のINL信号レベル(白)を表示。確認後は通常表示に戻す。
-        // 小さい信号でも見えるように5倍に増幅して表示(実際の判定には使わない)。
-        float peak = inl_peak_debug;
-        inl_peak_debug = 0.f; // 次の制御ループ分をリセット
-        float peak_display = peak * 5.f;
-        if(peak_display > 1.f)
-            peak_display = 1.f;
-        hw.SetLed(LED_L1, peak_display, peak_display, peak_display);
+        float hit = amp_env.GetValue();
+        hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
         hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
                   waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
                   waveform_mode == WAVE_MODE_CLAP ? 1.f : 0.f);
