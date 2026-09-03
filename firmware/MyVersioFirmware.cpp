@@ -146,6 +146,9 @@ constexpr float kClapGain = 3.0f;
 float    inl_prev_sample        = 0.f;
 uint32_t inl_samples_since_edge = 0;
 
+// [調査用] INLの信号レベル(ピークホールド)。L1で目視確認するためのデバッグ用。
+volatile float inl_peak_debug = 0.f;
+
 float clap_gate_smoothed  = 0.f; // バーストゲートの角を丸めた後の値
 float clap_gate_smooth_coeff = 0.f; // main()でsample_rate確定後に計算
 
@@ -202,6 +205,13 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
             inl_samples_since_edge = 0;
         }
         inl_prev_sample = inl_sample;
+
+        // [調査用] INLの信号レベルをピークホールドしてL1で目視できるようにする
+        float inl_abs = fabsf(inl_sample);
+        if(inl_abs > inl_peak_debug)
+            inl_peak_debug = inl_abs;
+        else
+            inl_peak_debug *= 0.9999f; // ゆっくり減衰(ピークメーター的な挙動)
 
         delay_time_current_samples
             += (delay_time_target_samples - delay_time_current_samples)
@@ -421,8 +431,9 @@ int main(void)
             mod_lfo_phase = 0.f;
         }
 
-        float hit = amp_env.GetValue();
-        hw.SetLed(LED_L1, hit, hit * 0.3f, 0.f); // L1: AMPエンベロープの発音インジケーター
+        // [調査用] L1にINLの信号レベル(白)を表示。確認後は通常表示に戻す。
+        float peak = inl_peak_debug;
+        hw.SetLed(LED_L1, peak, peak, peak);
         hw.SetLed(LED_L2, waveform_mode == WAVE_MODE_SINE ? 1.f : 0.f,   // L2: OSC波形(T2)
                   waveform_mode == WAVE_MODE_SQUARE ? 1.f : 0.f,
                   waveform_mode == WAVE_MODE_CLAP ? 1.f : 0.f);
